@@ -124,7 +124,7 @@
    await DB.commitReceipt(job);
    draft=null;$('receiptConfirmOverlay').classList.add('hidden');$('receiptView').classList.add('hidden');
    view('homeView');renderHome();message('Приёмка '+job.qty+' шт. сохранена. Отправляем на сервер.');
-   void sendReceipts();
+   sending=false; void sendReceipts();
   }catch(e){feedback(false,e.message)}
   finally{sending=false;b.disabled=false}
  };
