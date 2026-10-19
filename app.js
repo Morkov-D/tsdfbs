@@ -143,7 +143,7 @@ $('loginForm').onsubmit=e=>{e.preventDefault();armAudio();busy($('loginForm').qu
   }catch(err){const cached=await DB.get('meta','lastEmployee');if((!activeOnline() || /Нет связи|Превышено время ожидания/i.test(err.message)) && cached && cached.id===id && T.catalog.products.length){T.employee=cached;T.session=null;message('Офлайн-вход по ранее подтверждённому ID. На сервер данные уйдут только после повторного онлайн-входа.','');}else throw err;}
   afterLogin();
 });};
-function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session)sendQueue();}
+function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session){sendQueue();setTimeout(()=>window.sendReceipts?.(),0);}}
 $('logout').onclick=()=>{T.employee=null;T.session=null;view('loginView');};
 
 function renderHome(){
