@@ -432,7 +432,7 @@ function renderQueue(){
   const lk=T.catalog.lks.find(x=>x.uuid===j.lkId);
   const labels={QUEUED:'На устройстве',SENDING:'Отправляется',UNCERTAIN:'Ожидает ответа',ERROR:'Ошибка сервера'};
   const conflict=j.status==='ERROR'&&((j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length)||(/^ЧЗ уже учтён ранее|^ЧЗ повторяется в сборке/i.test(j.message||'')));
-  return '<div class="item job"><div><b>'+escapeHtml(lk?.name||'ЛК')+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
+  return '<div class="item job"><div><b>'+escapeHtml(j.kind==='RECEIPT'?'Приёмка':(lk?.name||'ЛК'))+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
     (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">'+(j.totalConflicts?'Проверить дубли · '+(j.confirmedConflicts?.length||0)+'/'+j.totalConflicts:'Проверить дубли')+'</button>':'')+
     '</div><span class="job-status '+(j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':'')+'">'+escapeHtml(labels[j.status]||j.status)+'</span></div>';
  }).join(''):'<p class="muted">Очередь пуста. Подтверждённые задания удалены из очереди, а разрешённые конфликты сохранены в архиве устройства.</p>';
@@ -699,7 +699,7 @@ async function sendQueue(){
  T.sending=true;$('sendQueue').disabled=true;
  try{
   T.queue=await DB.all('queue');
-  const items=T.queue.filter(j=>!['ERROR','RESOLVED','SUCCESS'].includes(j.status));
+  const items=T.queue.filter(j=>j.kind!=='RECEIPT'&&!['ERROR','RESOLVED','SUCCESS'].includes(j.status));
   let num=0;
   for(const job of items){
    num++;
