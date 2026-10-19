@@ -1,12 +1,12 @@
-/* StockFlow TSD service worker 5.1.1 — old IndexedDB data is NEVER cleared. */
+/* StockFlow TSD service worker 5.2.0 — old IndexedDB data is NEVER cleared. */
 'use strict';
-const CACHE = 'stockflow-tsd-v5.1.1';
+const CACHE = 'stockflow-tsd-v5.2.0';
 const PREFIX = 'stockflow-tsd-';
 const ASSETS = [
   './', './index.html',
-  './styles.css?v=5.1.1', './db.js?v=5.1.1',
-  './api.js?v=5.1.1', './app.js?v=5.1.1',
-  './manifest.webmanifest?v=5.1.1', './icons/stockflow.svg?v=5.1.1'
+  './styles.css?v=5.2.0', './db.js?v=5.2.0',
+  './api.js?v=5.2.0', './app.js?v=5.2.0', './receipt.js?v=5.2.0',
+  './manifest.webmanifest?v=5.2.0', './icons/stockflow.svg?v=5.2.0'
 ];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
