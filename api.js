@@ -80,5 +80,25 @@ window.API = (() => {
     };
   }
 
-  return { jsonp, sendAssembly };
+  /** Receipt POST is opaque on GAS; status is authoritative. Never issue a new job ID on retries. */
+  async function sendReceipt(endpoint,payload) {
+    if(!endpoint)throw Error('Не указан адрес сервера Apps Script');
+    try{
+      await fetch(endpoint,{method:'POST',mode:'no-cors',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify(payload),redirect:'follow'});
+    }catch(_){}
+    for(let attempt=0;attempt<7;attempt++){
+      await sleep(attempt===0?1200:2300);
+      try{
+        const result=await jsonp(endpoint,{op:'receiptStatus',token:payload.token,jobId:payload.jobId});
+        if(result&&['SUCCESS','ERROR','UNCERTAIN'].includes(result.status))return result;
+      }catch(err){
+        if(/Сессия истекла|Доступ сотрудника закрыт/.test(err.message))throw err;
+      }
+    }
+    return {status:'UNCERTAIN',message:'Подтверждение приёмки не получено; ID сохранён для сверки'};
+  }
+
+  return { jsonp, sendAssembly, sendReceipt };
 })();
