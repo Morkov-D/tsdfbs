@@ -115,6 +115,17 @@ window.DB = (() => {
     });
   }
 
+  /** Confirmed TSD receiving is committed in a single local transaction.
+   * The scan draft disappears only after the durable queue record is written. */
+  async function commitReceipt(job) {
+    if(!job || !job.jobId || job.kind!=='RECEIPT')throw Error('Некорректная приёмка');
+    const db=await open();
+    return transaction(db,['queue','draft'],'readwrite',tx=>{
+      tx.objectStore('queue').put({id:job.jobId,value:job});
+      tx.objectStore('draft').delete('receipt');
+    });
+  }
+
   /**
    * Cancel ONLY the active, unsubmitted draft. Verify identity within one IDB
    * transaction to avoid deleting another draft after a stale confirmation.
@@ -181,5 +192,5 @@ window.DB = (() => {
     });
   }
 
-  return { open, get, all, put, del, replaceCatalog, commitAssembly, cancelDraft, resolveConflict };
+  return { open, get, all, put, del, replaceCatalog, commitAssembly, commitReceipt, cancelDraft, resolveConflict };
 })();
