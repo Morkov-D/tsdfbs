@@ -143,7 +143,7 @@ $('loginForm').onsubmit=e=>{e.preventDefault();armAudio();busy($('loginForm').qu
   }catch(err){const cached=await DB.get('meta','lastEmployee');if((!activeOnline() || /Нет связи|Превышено время ожидания/i.test(err.message)) && cached && cached.id===id && T.catalog.products.length){T.employee=cached;T.session=null;message('Офлайн-вход по ранее подтверждённому ID. На сервер данные уйдут только после повторного онлайн-входа.','');}else throw err;}
   afterLogin();
 });};
-function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session){sendQueue();setTimeout(()=>window.sendReceipts?.(),0);}}
+function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session){window.TSDSync?.wake(0);setTimeout(()=>window.sendReceipts?.(),0);}}
 $('logout').onclick=()=>{T.employee=null;T.session=null;view('loginView');};
 
 function renderHome(){
@@ -388,7 +388,7 @@ $('confirmFinish').onclick=()=>busy($('confirmFinish'),async()=>{
   stopCamera();view('homeView');renderHome();
   message('Сборка '+job.qty+' шт. сохранена. Отправка в фоне при наличии связи.');
   haptic([60,35,60]);playTone(true);
-  if(activeOnline()&&T.session)sendQueue();
+  if(activeOnline()&&T.session)window.TSDSync?.wake(0);
 });
 $('syncCatalog').onclick=()=>busy($('syncCatalog'),async()=>{const changed=await syncCatalog(true);renderHome();message(changed?'Справочники обновлены':'Нет изменений');});
 async function syncCatalog(force=false){
@@ -428,15 +428,15 @@ function conflictMatches(job){
 function renderQueue(){
  const pending=T.queue.filter(j=>!['SUCCESS','RESOLVED'].includes(j.status));
  $('queueCount').textContent=pending.length;
- $('queueList').innerHTML=pending.length?pending.slice().reverse().map(j=>{
+ $('queueList').innerHTML=pending.length?pending.slice(-40).reverse().map(j=>{
   const lk=T.catalog.lks.find(x=>x.uuid===j.lkId);
   const labels={QUEUED:'На устройстве',SENDING:'Отправляется',UNCERTAIN:'Ожидает ответа',ERROR:'Ошибка сервера'};
   const conflict=j.status==='ERROR'&&((j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length)||(/^ЧЗ уже учтён ранее|^ЧЗ повторяется в сборке/i.test(j.message||'')));
   return '<div class="item job"><div><b>'+escapeHtml(j.kind==='RECEIPT'?'Приёмка':(lk?.name||'ЛК'))+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
     (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">'+(j.totalConflicts?'Проверить дубли · '+(j.confirmedConflicts?.length||0)+'/'+j.totalConflicts:'Проверить дубли')+'</button>':'')+
     '</div><span class="job-status '+(j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':'')+'">'+escapeHtml(labels[j.status]||j.status)+'</span></div>';
- }).join(''):'<p class="muted">Очередь пуста. Подтверждённые задания удалены из очереди, а разрешённые конфликты сохранены в архиве устройства.</p>';
- $('sendQueue').disabled=T.sending||pending.every(j=>j.status==='ERROR');
+ }).join('')+(pending.length>40?'<p class="muted">Показаны последние 40 из '+pending.length+' заданий. Остальные сохранены в IndexedDB.</p>':''):'<p class="muted">Очередь пуста. Подтверждённые задания сохранены в истории устройства.</p>';
+ $('sendQueue').disabled=!T.session||!activeOnline()||!pending.some(j=>['QUEUED','SENDING','UNCERTAIN'].includes(j.status));
 }
 $('queueList').addEventListener('click',e=>{
  const btn=e.target.closest('.conflict-open');
@@ -686,60 +686,10 @@ async function finalizeConfirmedConflicts(jobId){
  renderQueue();
  conflictFeedback(true,'Проверено и исключено '+verified.length+' дублей.');
  message(newJob?'Дубли удалены. Оставшиеся '+count+' шт. отправляются на сервер.':'Все товары были дублями; отправлять нечего.');
- if(newJob&&T.session&&activeOnline()){
-   if(T.sending)setTimeout(()=>sendQueue(),1500);
-   else void sendQueue();
- }
+ if(newJob&&T.session&&activeOnline())window.TSDSync?.wake(0);
 }
-$('sendQueue').onclick=()=>sendQueue();
-async function sendQueue(){
- if(T.sending)return;
- if(!T.session){message('Для отправки очереди выполните онлайн-вход','bad');return;}
- if(!activeOnline()){message('Нет соединения. Очередь сохранена на устройстве.','');return;}
- T.sending=true;$('sendQueue').disabled=true;
- try{
-  T.queue=await DB.all('queue');
-  const items=T.queue.filter(j=>j.kind!=='RECEIPT'&&!['ERROR','RESOLVED','SUCCESS'].includes(j.status));
-  let num=0;
-  for(const job of items){
-   num++;
-   job.status='SENDING';job.message='Проверяем подтверждение на сервере';
-   await DB.put('queue',job.jobId,job);
-   T.queue=await DB.all('queue');renderQueue();
-   stage('Передача сборки '+num+' из '+items.length+' · '+job.qty+' шт.',Math.round((num-1)/items.length*100));
-   let result;
-   try{result=await API.sendAssembly(T.endpoint,{action:'assembly',token:T.session,jobId:job.jobId,lkId:job.lkId,warehouseId:job.warehouseId,items:job.items});}
-   catch(e){
-    job.status='UNCERTAIN';job.message=e.message;
-    await DB.put('queue',job.jobId,job);
-    message('Нет подтверждения сервера: '+e.message,'bad');
-    break; // Could have written; stop until jobId status is known.
-   }
-   if(result.status==='SUCCESS'){
-    await DB.del('queue',job.jobId);
-    stage('Подтверждена сборка '+num+' из '+items.length,Math.round(num/items.length*100));
-    message('Подтверждено сервером: '+job.qty+' шт. · '+job.jobId.slice(0,8));
-   }else if(result.status==='ERROR'){
-    job.status='ERROR';job.message=result.message||'Ошибка сервера';
-    if(result.errorCode==='CHZ_DUPLICATES'&&result.safeToResubmit&&Array.isArray(result.conflicts)){
-      job.errorCode=result.errorCode;job.conflicts=result.conflicts;job.totalConflicts=result.totalConflicts;job.safeToResubmit=true;
-      job.message='Обнаружено повторных кодов ЧЗ: '+job.totalConflicts+'. Откройте поиск дублей.';
-    }else{job.errorCode='';job.conflicts=[];job.safeToResubmit=false;}
-    await DB.put('queue',job.jobId,job);
-    message('Ошибка сборки '+job.jobId.slice(0,8)+': '+job.message,'bad');
-    // Known validation error before writes is isolated; continue sending OTHER jobs.
-   }else{
-    job.status='UNCERTAIN';job.message=result.message||'Нет подтверждения';
-    await DB.put('queue',job.jobId,job);
-    message('Сборка '+job.jobId.slice(0,8)+' пока не подтверждена, повторно сканировать её нельзя.','bad');
-    break;
-   }
-  }
- }finally{
-  stageEnd();T.queue=await DB.all('queue');T.sending=false;
-  if(!$('homeView').classList.contains('hidden'))renderQueue();
- }
-}
+$('sendQueue').onclick=()=>window.TSDSync?.wake(0);
+function sendQueue(){window.TSDSync?.wake(0);}
 
 // Camera scanning is optional. Hardware TSD scanners work as keyboard input + Enter.
 $('cameraBtn').onclick=async()=>{try{if(!('BarcodeDetector'in window))throw Error('Браузер не поддерживает BarcodeDetector. Используйте сканер ТСД или ручной ввод.');
@@ -770,13 +720,13 @@ document.addEventListener('pointerup',()=>deferWedgeFocus(100),true);
 document.addEventListener('touchend',()=>deferWedgeFocus(110),{passive:true,capture:true});
 window.addEventListener('pageshow',()=>deferWedgeFocus(130));
 window.addEventListener('focus',()=>deferWedgeFocus(130));
-window.addEventListener('online',()=>{showConnection();if(T.session)sendQueue();});
+window.addEventListener('online',()=>{showConnection();if(T.session)window.TSDSync?.wake(0);});
 window.addEventListener('offline',showConnection);
-window.addEventListener('focus',()=>{if(T.session&&activeOnline()&&!T.sending)sendQueue();});
+window.addEventListener('focus',()=>{if(T.session&&activeOnline())window.TSDSync?.wake(0);});
 document.addEventListener('visibilitychange',()=>{
  if(!document.hidden){
   deferWedgeFocus(140);
-  if(T.session&&activeOnline())sendQueue();
+  if(T.session&&activeOnline())window.TSDSync?.wake(0);
  }
 });
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW:',e));
