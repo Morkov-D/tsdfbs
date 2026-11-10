@@ -71,7 +71,7 @@ function view(id){['setupView','loginView','homeView','assemblyView'].forEach(x=
 function message(text,type='good'){const area=$('alerts');area.innerHTML=`<div class="notice ${type}">${escapeHtml(text)}</div>`;clearTimeout(window.alertTimer);window.alertTimer=setTimeout(()=>area.innerHTML='',8000);}
 function busy(button,cb){if(button.disabled)return;button.disabled=true;const original=button.dataset.label||button.textContent;button.dataset.label=original;button.textContent='⏳ Выполняется…';Promise.resolve().then(cb).catch(e=>{console.error(e);message(e.message||String(e),'bad');}).finally(()=>{button.disabled=false;button.textContent=original;});}
 function activeOnline(){return navigator.onLine;}
-function showConnection(){$('connection').classList.toggle('offline',!activeOnline());$('connection').textContent=activeOnline()?'● В сети':'● Офлайн';$('connection').title=activeOnline()?'Сеть доступна':'Нет сети: очередь сохранится';}
+function showConnection(){const connected=activeOnline(),api=T.apiHealth||'unknown';$('connection').classList.toggle('offline',!connected||api==='error');$('connection').textContent=!connected?'● Офлайн':api==='error'?'● API недоступен':api==='ok'?'● API доступен':'● В сети';$('connection').title=!connected?'Нет сети: очередь сохранится':api==='error'?'Интернет есть, но сервер не ответил':api==='ok'?'Последняя авторизация через сервер успешна':'Есть интернет, доступность Apps Script ещё не проверена';}
 
 const lkLabel=lk=>(lk.name||'ЛК')+' · '+(lk.marketplace||'')+' · '+(lk.externalId||'');
 function setViewportSheet(){
@@ -133,18 +133,18 @@ async function beginDraft(lkId){
 }
 function isGTINValid(gtin){if(!/^\d{14}$/.test(gtin))return false;let sum=0;for(let i=0;i<13;i++)sum+=Number(gtin[i])*(i%2===0?3:1);return (10-sum%10)%10===Number(gtin[13]);}
 function parseDM(value){const code=String(value||'').replace(/^\]d2/,'');const m=code.match(/^01(\d{14})21([^\x1d]{1,20})(?:\x1d|$)/);if(!m)throw Error('Не распознан DataMatrix: нужны AI 01 + GTIN и AI 21 + серия. Проверьте настройки сканера (разделитель GS).');if(!isGTINValid(m[1]))throw Error('Ошибка контрольной цифры GTIN в ЧЗ');return {raw:code,gtin:m[1],serial:m[2]};}
-async function start(){await DB.open();T.endpoint=localStorage.getItem('stockflow_endpoint')||'';T.catalog=await DB.get('catalog','snapshot')||T.catalog;T.draft=await DB.get('draft','current')||null;T.queue=await DB.all('queue');buildIndexes();$('employeeId').value=localStorage.getItem('stockflow_employee')||'';showConnection();if(T.endpoint)view('loginView');else view('setupView');}
-$('setupForm').onsubmit=e=>{e.preventDefault();const url=$('endpoint').value.trim();let u;try{u=new URL(url);}catch(e){return message('Некорректный URL','bad');}if(u.protocol!=='https:'||u.hostname!=='script.google.com'||!/^\/macros\/s\/[^/]+\/exec$/.test(u.pathname))return message('Нужна опубликованная HTTPS-ссылка Apps Script, оканчивающаяся на /exec','bad');T.endpoint=u.origin+u.pathname;localStorage.setItem('stockflow_endpoint',T.endpoint);view('loginView');message('Адрес сервера сохранён');};
+async function start(){await DB.open();T.endpoint=localStorage.getItem('stockflow_endpoint')||'';T.catalog=await DB.get('catalog','snapshot')||T.catalog;T.draft=await DB.get('draft','current')||null;T.queue=await DB.all('queue');buildIndexes();$('employeeId').value=localStorage.getItem('stockflow_employee')||'';$('keepSignedIn').checked=localStorage.getItem('stockflow_auto_login')!=='0';showConnection();if(T.endpoint){view('loginView');await window.TSDSession?.restore();}else view('setupView');}
+$('setupForm').onsubmit=e=>{e.preventDefault();const url=$('endpoint').value.trim();let u;try{u=new URL(url);}catch(e){return message('Некорректный URL','bad');}if(u.protocol!=='https:'||u.hostname!=='script.google.com'||!/^\/macros\/s\/[^/]+\/exec$/.test(u.pathname))return message('Нужна опубликованная HTTPS-ссылка Apps Script, оканчивающаяся на /exec','bad');const changed=T.endpoint!==u.origin+u.pathname;if(changed)window.TSDSession?.endpointChanged();T.endpoint=u.origin+u.pathname;localStorage.setItem('stockflow_endpoint',T.endpoint);view('loginView');message('Адрес сервера сохранён');};
 $('changeEndpoint').onclick=()=>{$('endpoint').value=T.endpoint;view('setupView');};
 $('loginForm').onsubmit=e=>{e.preventDefault();armAudio();busy($('loginForm').querySelector('button'),async()=>{
   const id=$('employeeId').value.trim();if(!id)throw Error('Введите ID сотрудника');
-  try{const response=await API.jsonp(T.endpoint,{op:'login',employeeId:id});T.session=response.token;T.employee=response.employee;localStorage.setItem('stockflow_employee',id);await DB.put('meta','lastEmployee',T.employee);
+  try{const response=await API.jsonp(T.endpoint,{op:'login',employeeId:id});T.session=response.token;T.employee=response.employee;window.TSDSession?.recordManualLogin(id,$('keepSignedIn').checked);await DB.put('meta','lastEmployee',T.employee);
     try{await syncCatalog();}catch(err){message('Вход выполнен, но обновить справочники не удалось: '+err.message,'bad');}
   }catch(err){const cached=await DB.get('meta','lastEmployee');if((!activeOnline() || /Нет связи|Превышено время ожидания/i.test(err.message)) && cached && cached.id===id && T.catalog.products.length){T.employee=cached;T.session=null;message('Офлайн-вход по ранее подтверждённому ID. На сервер данные уйдут только после повторного онлайн-входа.','');}else throw err;}
   afterLogin();
 });};
 function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session){window.TSDSync?.wake(0);setTimeout(()=>window.sendReceipts?.(),0);}}
-$('logout').onclick=()=>{T.employee=null;T.session=null;view('loginView');};
+$('logout').onclick=()=>{window.TSDSession?.logout();T.employee=null;T.session=null;view('loginView');message('Вы вышли. Автоматический вход отключён; сохранённые сборки не удалены.');};
 
 function renderHome(){
   const warehouse=$('warehouse'),previous=localStorage.getItem('stockflow_last_warehouse');
@@ -720,13 +720,13 @@ document.addEventListener('pointerup',()=>deferWedgeFocus(100),true);
 document.addEventListener('touchend',()=>deferWedgeFocus(110),{passive:true,capture:true});
 window.addEventListener('pageshow',()=>deferWedgeFocus(130));
 window.addEventListener('focus',()=>deferWedgeFocus(130));
-window.addEventListener('online',()=>{showConnection();if(T.session)window.TSDSync?.wake(0);});
+window.addEventListener('online',()=>{showConnection();window.TSDSession?.wake();});
 window.addEventListener('offline',showConnection);
-window.addEventListener('focus',()=>{if(T.session&&activeOnline())window.TSDSync?.wake(0);});
+window.addEventListener('focus',()=>{if(activeOnline())window.TSDSession?.wake();});
 document.addEventListener('visibilitychange',()=>{
  if(!document.hidden){
   deferWedgeFocus(140);
-  if(T.session&&activeOnline())window.TSDSync?.wake(0);
+  if(activeOnline())window.TSDSession?.wake();
  }
 });
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW:',e));

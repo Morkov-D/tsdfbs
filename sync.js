@@ -15,7 +15,7 @@ window.TSDSync = (() => {
 
   const assembly = job => job && job.kind !== 'RECEIPT';
   const nowISO = () => new Date().toISOString();
-  const online = () => Boolean(T.endpoint && T.session && navigator.onLine);
+  const online = () => Boolean(T.endpoint && navigator.onLine && T.employee);
   const isHome = () => !document.getElementById('homeView').classList.contains('hidden');
 
   function showStatus(text) {
@@ -102,6 +102,8 @@ window.TSDSync = (() => {
     const current = await DB.get('queue', job.jobId);
     if (!current || !assembly(current) || ['SUCCESS', 'RESOLVED', 'ERROR'].includes(current.status))
       return;
+    // Never submit old offline jobs under another employee's server token.
+    if (!T.employee || String(current.employeeId) !== String(T.employee.id)) return;
 
     if (current.status === 'SENDING' || current.status === 'UNCERTAIN') {
       // SENDING left from a previous app instance may already have written stock.
@@ -139,7 +141,7 @@ window.TSDSync = (() => {
   }
 
   async function cycle() {
-    const all = (await DB.all('queue')).filter(assembly);
+    const all = (await DB.all('queue')).filter(j => assembly(j) && T.employee && String(j.employeeId) === String(T.employee.id));
     const queued = all.filter(j => j.status === 'QUEUED')
       .sort((a,b) => String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
     const recover = all.filter(j => (j.status === 'SENDING' || j.status === 'UNCERTAIN') &&
@@ -173,7 +175,7 @@ window.TSDSync = (() => {
       if (isHome()) renderQueue();
     }
 
-    const left = T.queue.filter(assembly);
+    const left = T.queue.filter(j => assembly(j) && T.employee && String(j.employeeId) === String(T.employee.id));
     const pending = left.filter(j => j.status === 'QUEUED').length;
     const unknown = left.filter(j => ['SENDING', 'UNCERTAIN'].includes(j.status)).length;
     const errors = left.filter(j => j.status === 'ERROR').length;
@@ -190,6 +192,12 @@ window.TSDSync = (() => {
     active = true;
     let delay = null;
     try {
+      const authorized = await window.TSDSession?.ensure(false);
+      if (!authorized || !T.session) {
+        showStatus('Нет действующей сессии сервера. Сборки сохранены; повторный вход и отправка выполнятся автоматически.');
+        delay = RETRY_MS;
+        return;
+      }
       const result = await exclusive(cycle);
       delay = result === false ? RETRY_MS : result;
     } catch (err) {
