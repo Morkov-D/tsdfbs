@@ -15,7 +15,7 @@ window.TSDSync = (() => {
 
   const assembly = job => job && job.kind !== 'RECEIPT';
   const nowISO = () => new Date().toISOString();
-  const online = () => Boolean(T.endpoint && T.session && navigator.onLine);
+  const online = () => Boolean(T.endpoint && navigator.onLine && T.employee);
   const isHome = () => !document.getElementById('homeView').classList.contains('hidden');
 
   function showStatus(text) {
@@ -190,6 +190,12 @@ window.TSDSync = (() => {
     active = true;
     let delay = null;
     try {
+      const authorized = await window.TSDSession?.ensure(false);
+      if (!authorized || !T.session) {
+        showStatus('Нет действующей сессии сервера. Сборки сохранены; повторный вход и отправка выполнятся автоматически.');
+        delay = RETRY_MS;
+        return;
+      }
       const result = await exclusive(cycle);
       delay = result === false ? RETRY_MS : result;
     } catch (err) {
